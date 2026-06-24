@@ -1,0 +1,147 @@
+STEP 0: <USER_REQUEST>
+ok so i have made the backend 3 do one thing run it with the frontend so i can test m
+STEP 35: <USER_REQUEST>
+says 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-22T11:
+STEP 41: <USER_REQUEST>
+says backend not connected check once and than restart the servers
+</USER_REQUEST>
+<A
+STEP 45: <USER_REQUEST>
+if you can write these endpoints write but dont change any of the core logic
+</USER_R
+STEP 67: <USER_REQUEST>
+make changes in the backend 3 according to the constraints WE FOLLOW EVERY WEEK SAME 
+STEP 90: Comments on artifact URI: file:///c%3A/Users/Vaibhav%20Rathod/.gemini/antigravity/brain/27c62125-25a
+STEP 102: Comments on artifact URI: file:///c%3A/Users/Vaibhav%20Rathod/.gemini/antigravity/brain/27c62125-25a
+STEP 111: <USER_REQUEST>
+continue working
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 202
+STEP 182: <USER_REQUEST>
+what are these?
+⚠️ Conflicts Detected
+Unscheduled Subjects
+BCVS (SY CSBS A, batch=1
+STEP 201: <USER_REQUEST>
+Continue
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-22T
+STEP 214: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+BCVS (SY CSBS A, batch=1, type=P, facult
+STEP 231: <USER_REQUEST>
+no so as i have mentioned before this is true for all the branches that there are n b
+STEP 274: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+DM (SY CSBS A, batch=1, type=T, faculty=
+STEP 292: <USER_REQUEST>
+only thing we will do is in only this case we will have two batches going for PPL at 
+STEP 317: <USER_REQUEST>
+why is this SY-ALL Time table generated the ALL one should be in everyone time table 
+STEP 330: <USER_REQUEST>
+Continue
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-22T
+STEP 343: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+CCA (LY EXCP A, batch=ALL, type=L, facul
+STEP 377: <USER_REQUEST>
+Continue
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-22T
+STEP 398: <USER_REQUEST>
+
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-22T13:03:31
+STEP 417: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+ICS (LY EXCP A, batch=ALL, type=L, facul
+STEP 445: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+AIML (LY EXCP A, batch=ALL, type=L, facu
+STEP 479: <USER_REQUEST>
+Conflicts Detected
+Unscheduled Subjects
+AIML (LY EXCP A, batch=ALL, type=L, faculty
+STEP 512: <USER_REQUEST>
+write down all the constraints that we have considered in the current backend
+</USER_
+STEP 522: <USER_REQUEST>
+new soft constraints to be added:
+SC-T1 — No full-day back-to-back A teacher should h
+STEP 534: Comments on artifact URI: file:///c%3A/Users/Vaibhav%20Rathod/.gemini/antigravity/brain/27c62125-25a
+STEP 570: <USER_REQUEST>
+FE isnt runnig
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-
+STEP 578: <USER_REQUEST>
+Add another constraint that there should be no gaps between day 
+if college starts at
+STEP 589: <USER_REQUEST>
+list down the new constraints that you added in this prompt both soft and hard:
+new s
+STEP 595: <USER_REQUEST>
+ make these constraints as hard ones : SC-T1/T3, SCS1 , SCS4, SCQ3, SCR1, SCQ2, SCQ5 
+STEP 602: Comments on artifact URI: file:///c%3A/Users/Vaibhav%20Rathod/.gemini/antigravity/brain/27c62125-25a
+STEP 608: Comments on artifact URI: file:///c%3A/Users/Vaibhav%20Rathod/.gemini/antigravity/brain/27c62125-25a
+STEP 632: <USER_REQUEST>
+start the servers
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 20
+STEP 641: <USER_REQUEST>
+Unscheduled Subjects
+NSS (SY VLSI A, batch=1, type=P, faculty=OPG)
+DSL (SY VLSI A, 
+STEP 659: <USER_REQUEST>
+ok
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-24T14:32:
+STEP 675: <USER_REQUEST>
+Unscheduled Subjects
+DM (SY EXCP A, batch=1, type=T, faculty=MGK)
+ITVC (SY EXCP A, 
+STEP 688: <USER_REQUEST>
+ok
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-24T14:37:
+STEP 717: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+RCV (LY EXCP A, batch=ALL, type=L, facul
+STEP 770: <USER_REQUEST>
+Conflicts Detected
+Unscheduled Subjects
+AIML (LY EXCP A, batch=ALL, type=L, faculty
+STEP 810: <USER_REQUEST>
+Continue
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-24T
+STEP 816: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+AIML (LY EXCP A, batch=ALL, type=L, facu
+STEP 870: <USER_REQUEST>
+⚠️ Conflicts Detected
+Unscheduled Subjects
+AIML (LY EXCP A, batch=ALL, type=L, facu
+STEP 949: <USER_REQUEST>
+go back to the version which was before adding these softconstraints
+i have mentioned

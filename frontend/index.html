@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Timetable Generator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="background-effects">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <main class="container">
+        <header class="glass-panel">
+            <h1>Auto Timetable Generator</h1>
+            <p>Upload Excel files to generate conflict-free schedules</p>
+        </header>
+
+        <!-- Upload View -->
+        <section id="upload-view" class="glass-panel active">
+            <h2>Upload Data</h2>
+            <div class="upload-zone" id="drop-zone">
+                <input type="file" id="file-input" accept=".xlsx" hidden>
+                <div class="upload-icon">📄</div>
+                <p>Drag & drop your Excel file here</p>
+                <span>or click to browse</span>
+            </div>
+            
+            <div id="upload-progress" class="hidden">
+                <div class="spinner"></div>
+                <p>Parsing data...</p>
+            </div>
+
+            <div id="upload-stats" class="stats-grid hidden">
+                <div class="stat-card">
+                    <span class="stat-value" id="stat-divs">0</span>
+                    <span class="stat-label">Divisions</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" id="stat-courses">0</span>
+                    <span class="stat-label">Courses</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" id="stat-faculty">0</span>
+                    <span class="stat-label">Faculty</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" id="stat-rooms">0</span>
+                    <span class="stat-label">Rooms</span>
+                </div>
+            </div>
+
+            <button id="btn-solve" class="btn primary hidden">Generate Timetable</button>
+            <div id="solve-progress" class="hidden">
+                <div class="spinner"></div>
+                <p id="solve-status-text">Solving constraints... (<span id="solve-timer">0</span>s)</p>
+            </div>
+        </section>
+
+        <!-- Results View -->
+        <section id="results-view" class="glass-panel hidden">
+            <div class="results-header">
+                <div class="header-title-group">
+                    <h2>Generated Timetable</h2>
+                    <div class="status-badge" id="solve-result-badge">OPTIMAL</div>
+                    <span id="solve-time-display" class="text-muted"></span>
+                </div>
+                <button id="btn-export" class="btn export-btn">Download Excel ⬇️</button>
+            </div>
+
+            <div id="conflicts-panel" class="hidden">
+                <div class="conflicts-header">
+                    <h3>⚠️ Conflicts Detected</h3>
+                </div>
+                <div id="conflicts-content" class="conflicts-content"></div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab active" data-target="tab-division">Divisions</button>
+                <button class="tab" data-target="tab-faculty">Faculty</button>
+                <button class="tab" data-target="tab-room">Rooms</button>
+            </div>
+
+            <!-- Division Tab -->
+            <div class="tab-content active" id="tab-division">
+                <div class="controls">
+                    <select id="select-division" class="glass-select"></select>
+                </div>
+                <div class="grid-container">
+                    <div class="timetable-grid" id="division-grid">
+                        <!-- Grid generated via JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Faculty Tab -->
+            <div class="tab-content" id="tab-faculty">
+                <div class="controls">
+                    <select id="select-faculty" class="glass-select"></select>
+                </div>
+                <div class="grid-container">
+                    <div class="timetable-grid" id="faculty-grid">
+                        <!-- Grid generated via JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Room Tab -->
+            <div class="tab-content" id="tab-room">
+                <div class="controls">
+                    <select id="select-room" class="glass-select"></select>
+                </div>
+                <div class="grid-container">
+                    <div class="timetable-grid" id="room-grid">
+                        <!-- Grid generated via JS -->
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

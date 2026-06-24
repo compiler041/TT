@@ -1,0 +1,252 @@
+STEP 137
+Created At: 2026-06-22T06:43:54Z
+Completed At: 2026-06-22T06:43:54Z
+The following changes were made by the multi_replace_file_content tool to: c:\Users\Vaibhav Rathod\Desktop\tt\backend-3\app\constraints.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -134,4 +134,96 @@
+         faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)
+         and class_is_free(timetable, subject.class_key, slot, subject.batch)
+         and room_ok
++    )
++
++def subject_hours_not_exceeded(timetable: Timetable, subject: Subject, duration: int) -> bool:
++    """True if placing `duration` hours won't exceed subject's weekly limit."""
++    current_hours = timetable.count_subject_hours(subject)
++    return (current_hours + duration) <= subject.hours_per_week
++
++def division_max_periods_per_day(timetable: Timetable, class_key: tuple[str, str, str], day: str, duration: int) -> bool:
++    """True if division won'
+
+STEP 404
+Created At: 2026-06-22T07:33:45Z
+Completed At: 2026-06-22T07:33:45Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 229
+Total Bytes: 8828
+Showing lines 140 to 160
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+140:     """True if placing `duration` hours won't exceed subject's weekly limit."""
+141:     current_hours = timetable.count_subject_hours(subject)
+142:     return (current_hours + duration) <= subject.hours_per_week
+143: 
+144: def division_max_periods_per_day(timetable: Timetable, class_key: tuple[str, str, str], day: str, duration: int) -> bool:
+145:     """True if division won't exceed 8 teaching periods today."""
+146:     entries = timetable.get_division_entries_on_day(class_key, day)
+147:     used_periods = set()
+148:     for e in 
+
+STEP 516
+Created At: 2026-06-22T08:56:30Z
+Completed At: 2026-06-22T08:56:31Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 229
+Total Bytes: 8828
+Showing lines 1 to 229
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: """
+2: Constraints - the rules a placement must satisfy before it's allowed
+3: into the Timetable.
+4: 
+5: Each function answers ONE yes/no question. They are pure (no mutation,
+6: no side effects) - they only ever look at the current Timetable state
+7: and return True/False.
+8: """
+9: 
+10: from app.models import Timetable, TimeSlot, Classroom, Subject, FacultyUnavailability
+11: 
+12: 
+13: def faculty_is_free(
+14:     timetable: Timetable,
+15:     faculty_code: str,
+16:     slot: TimeSlot,
+17:     faculty_unavailability: list[FacultyUnava
+
+STEP 526
+Created At: 2026-06-23T14:02:08Z
+Completed At: 2026-06-23T14:02:08Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 229
+Total Bytes: 8828
+Showing lines 150 to 229
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+150:     return (len(used_periods) + duration) <= 9
+151: 
+152: def no_theory_during_practical(timetable: Timetable, class_key: tuple[str, str, str], slot: TimeSlot) -> bool:
+153:     """True if no theory/tutorial is scheduled for this division at `slot`."""
+154:     entries = timetable.get_division_entries_on_day(class_key, slot.day)
+155:     for e in entries:
+156:         if not e.subject.is_practical and e.timeslot.overlaps(slot):
+157:             return False
+158:     return True
+159: 
+160: def score_placement(timetable: Timetable, su
+
+STEP 538
+Created At: 2026-06-23T14:10:50Z
+Completed At: 2026-06-23T14:10:50Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 229
+Total Bytes: 8828
+Showing lines 1 to 160
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: """
+2: Constraints - the rules a placement must satisfy before it's allowed
+3: into the Timetable.
+4: 
+5: Each function answers ONE yes/no question. They are pure (no mutation,
+6: no side effects) - they only ever look at the current Timetable state
+7: and return True/False.
+8: """
+9: 
+10: from app.models import Timetable, TimeSlot, Classroom, Subject, FacultyUnavailability
+11: 
+12: 
+13: def faculty_is_free(
+14:     timetable: Timetable,
+15:     faculty_code: str,
+16:     slot: TimeSlot,
+17:     faculty_unavailability: list[FacultyUnava
+
+STEP 542
+Created At: 2026-06-23T14:11:48Z
+Completed At: 2026-06-23T14:11:49Z
+The following changes were made by the replace_file_content tool to: c:\Users\Vaibhav Rathod\Desktop\tt\backend-3\app\constraints.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -160,9 +160,15 @@
+ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot) -> int:
+     """Returns a penalty score (lower = better) for soft constraints."""
+     penalty = 0
++    days = ["M", "T", "W", "R", "F"]
+     day_entries_div = timetable.get_division_entries_on_day(subject.class_key, slot.day)
+-    
+-    # +10 if same theory subject already on this day (want spread)
++
++    # --- Existing: Student used periods for this day ---
++    used_periods = set()
++    for e in day_entries_div:
++        used_periods.update(e.timeslot.occupied_periods)
++
++    # --- Existing: +10 if same theory subject already on this day (want s
+
+STEP 546
+Created At: 2026-06-23T14:12:01Z
+Completed At: 2026-06-23T14:12:02Z
+
+				The command completed successfully.
+				Output:
+				app\scheduler.py:12:from app.constraints import is_valid_placement_v2, room_is_free, score_placement
+app\scheduler.py:178:                    slot_score += score_placement(timetable, subj, faculty_code, slot)
+app\scheduler.py:266:                    slot_score += score_placement(timetable, subject, faculty_code, slot)
+app\scheduler.py:354:                    slot_score += score_placement(timetable, subject, faculty_code, slot)
+app\scheduler.py:441:                    score = score_placement(timetable, subj, faculty_code, slot)
+app\constraints.py:160:def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot) -> int:
+
+
+
+STEP 558
+Created At: 2026-06-23T14:12:45Z
+Completed At: 2026-06-23T14:12:45Z
+The following changes were made by the replace_file_content tool to: c:\Users\Vaibhav Rathod\Desktop\tt\backend-3\app\constraints.py. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -157,7 +157,7 @@
+             return False
+     return True
+ 
+-def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot) -> int:
++def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot, classroom: Classroom = None) -> int:
+     """Returns a penalty score (lower = better) for soft constraints."""
+     penalty = 0
+     days = ["M", "T", "W", "R", "F"]
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not sh
+
+STEP 592
+Created At: 2026-06-24T08:42:58Z
+Completed At: 2026-06-24T08:42:59Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 333
+Total Bytes: 14755
+Showing lines 160 to 333
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+160: def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot, classroom: Classroom = None) -> int:
+161:     """Returns a penalty score (lower = better) for soft constraints."""
+162:     penalty = 0
+163:     days = ["M", "T", "W", "R", "F"]
+164:     day_entries_div = timetable.get_division_entries_on_day(subject.class_key, slot.day)
+165: 
+166:     # --- Existing: Student used periods for this day ---
+167:     used_periods = set()
+168:     for e in day_entries_div:
+169:         used_periods.update(e.t
+
+STEP 614
+Created At: 2026-06-24T08:56:51Z
+Completed At: 2026-06-24T08:56:51Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 333
+Total Bytes: 14755
+Showing lines 160 to 300
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+160: def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot, classroom: Classroom = None) -> int:
+161:     """Returns a penalty score (lower = better) for soft constraints."""
+162:     penalty = 0
+163:     days = ["M", "T", "W", "R", "F"]
+164:     day_entries_div = timetable.get_division_entries_on_day(subject.class_key, slot.day)
+165: 
+166:     # --- Existing: Student used periods for this day ---
+167:     used_periods = set()
+168:     for e in day_entries_div:
+169:         used_periods.update(e.t
+
+STEP 842
+Created At: 2026-06-24T09:20:13Z
+Completed At: 2026-06-24T09:20:13Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 306
+Total Bytes: 13101
+Showing lines 140 to 180
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+140:     """True if placing `duration` hours won't exceed subject's weekly limit."""
+141:     current_hours = timetable.count_subject_hours(subject)
+142:     return (current_hours + duration) <= subject.hours_per_week
+143: 
+144: def division_max_periods_per_day(timetable: Timetable, class_key: tuple[str, str, str], day: str, duration: int) -> bool:
+145:     """True if division won't exceed 9 teaching periods today."""
+146:     entries = timetable.get_division_entries_on_day(class_key, day)
+147:     used_periods = set()
+148:     for e in
+
+STEP 958
+Created At: 2026-06-24T09:32:37Z
+Completed At: 2026-06-24T09:32:37Z
+File Path: `file:///c:/Users/Vaibhav%20Rathod/Desktop/tt/backend-3/app/constraints.py`
+Total Lines: 306
+Total Bytes: 13101
+Showing lines 150 to 250
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+150:     return (len(used_periods) + duration) <= 9
+151: 
+152: def no_theory_during_practical(timetable: Timetable, class_key: tuple[str, str, str], slot: TimeSlot) -> bool:
+153:     """True if no theory/tutorial is scheduled for this division at `slot`."""
+154:     entries = timetable.get_division_entries_on_day(class_key, slot.day)
+155:     for e in entries:
+156:         if not e.subject.is_practical and e.timeslot.overlaps(slot):
+157:             return False
+158:     return True
+159: 
+160: def score_placement(timetable: Timetable, s
+
+STEP 961
+Created At: 2026-06-24T09:32:54Z
+Completed At: 2026-06-24T09:32:57Z
+
+				The command failed with exit code: 1
+				Output:
+				  File "<string>", line 1
+    import json; log_file=r'C:\Users\Vaibhav Rathod\.gemini\antigravity\brain\27c62125-25a9-4efb-8d16-7cce4063ba68\.system_generated\logs\transcript_full.jsonl'; out=open('dump.txt','w',encoding='utf-8'); \nfor line in open(log_file,encoding='utf-8'):\n try:\n  d=json.loads(line)\n  if 'content' in d and 'def score_placement' in d['content']:\n   out.write('FOUND CONTENT AT STEP ' + str(d.get('step_index')) + '\n' + d['content'][:500] + '\n\n')\n except: pass\nout.close()
+                                                                                                                                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+
+
+
