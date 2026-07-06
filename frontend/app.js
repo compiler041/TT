@@ -21,7 +21,8 @@ function setupExportButton() {
     const btn = document.getElementById('btn-export');
     if (btn) {
         btn.addEventListener('click', () => {
-            window.location.href = `${API_URL}/export`;
+            const timestamp = new Date().getTime();
+            window.location.href = `${API_URL}/export?t=${timestamp}`;
         });
     }
 }

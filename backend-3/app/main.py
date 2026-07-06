@@ -427,96 +427,6 @@ async def api_conflicts():
     return JSONResponse({"conflicts": conflicts})
 
 
-# ---------- GET /api/export ----------
-
-@app.get("/api/export")
-async def api_export():
-    timetable: Timetable = _state["timetable"]
-    if timetable is None:
-        raise HTTPException(status_code=400, detail="Timetable not generated yet.")
-
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    except ImportError:
-        raise HTTPException(status_code=500, detail="openpyxl not installed")
-
-    wb = Workbook()
-    wb.remove(wb.active)
-
-    # Build per-division grids
-    grid = _build_grid(timetable)
-
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    thin_border = Border(
-        left=Side(style="thin"), right=Side(style="thin"),
-        top=Side(style="thin"), bottom=Side(style="thin"),
-    )
-    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    period_labels = []
-    for p in sorted(PERIOD_TIME_MAP.keys()):
-        t = PERIOD_TIME_MAP[p]
-        period_labels.append((p, f"P{p} ({t[0].strftime('%H:%M')}-{t[1].strftime('%H:%M')})"))
-
-    for class_key, day_period_map in grid.items():
-        sheet_name = f"{class_key[0]}-{class_key[1]}-{class_key[2]}"[:31]
-        ws = wb.create_sheet(title=sheet_name)
-
-        # Header row
-        ws.cell(row=1, column=1, value="Period").font = header_font
-        ws.cell(row=1, column=1).fill = header_fill
-        ws.cell(row=1, column=1).alignment = center_align
-        ws.cell(row=1, column=1).border = thin_border
-
-        for di, day in enumerate(VALID_DAYS):
-            cell = ws.cell(row=1, column=di + 2, value=day)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = center_align
-            cell.border = thin_border
-
-        # Data rows
-        for ri, (period, label) in enumerate(period_labels):
-            row = ri + 2
-            ws.cell(row=row, column=1, value=label).alignment = center_align
-            ws.cell(row=row, column=1).border = thin_border
-            ws.cell(row=row, column=1).font = Font(bold=True)
-
-            for di, day in enumerate(VALID_DAYS):
-                slot_key = (day, period)
-                entries_at_slot = day_period_map.get(slot_key, [])
-                if entries_at_slot:
-                    lines = []
-                    for e in entries_at_slot:
-                        line = e.subject.name
-                        if e.batch != "ALL":
-                            line += f" (B{e.batch})"
-                        line += f"\n{e.faculty_code} | {e.classroom.room_id}"
-                        lines.append(line)
-                    cell_value = "\n---\n".join(lines)
-                else:
-                    cell_value = ""
-
-                cell = ws.cell(row=row, column=di + 2, value=cell_value)
-                cell.alignment = center_align
-                cell.border = thin_border
-
-        # Auto-width
-        for col in ws.columns:
-            ws.column_dimensions[col[0].column_letter].width = 22
-
-    # Save to temp file
-    export_path = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx").name
-    wb.save(export_path)
-
-    return FileResponse(
-        export_path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename="timetable_export.xlsx",
-    )
-
 @app.get("/api/debug_subjects")
 def debug_subjects():
     all_faculty: set[str] = set()
@@ -642,6 +552,26 @@ async def api_export():
     # Build per-division grids
     grid = _build_grid(timetable)
 
+    # Build per-faculty grid
+    fac_grid = {}
+    for entry in timetable.entries:
+        fac = entry.faculty_code
+        if not fac: continue
+        day_map = fac_grid.setdefault(fac, {})
+        for p in entry.timeslot.occupied_periods:
+            slot_key = (entry.timeslot.day, p)
+            day_map.setdefault(slot_key, []).append(entry)
+            
+    # Build per-room grid
+    room_grid = {}
+    for entry in timetable.entries:
+        rm = entry.classroom.room_id
+        if not rm: continue
+        day_map = room_grid.setdefault(rm, {})
+        for p in entry.timeslot.occupied_periods:
+            slot_key = (entry.timeslot.day, p)
+            day_map.setdefault(slot_key, []).append(entry)
+
     header_font = Font(bold=True, color="FFFFFF", size=11)
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     thin_border = Border(
@@ -655,11 +585,7 @@ async def api_export():
         t = PERIOD_TIME_MAP[p]
         period_labels.append((p, f"P{p} ({t[0].strftime('%H:%M')}-{t[1].strftime('%H:%M')})"))
 
-    for class_key, day_period_map in grid.items():
-        sheet_name = f"{class_key[0]}-{class_key[1]}-{class_key[2]}"[:31]
-        ws = wb.create_sheet(title=sheet_name)
-
-        # Header row
+    def populate_ws(ws, day_period_map, formatter):
         ws.cell(row=1, column=1, value="Period").font = header_font
         ws.cell(row=1, column=1).fill = header_fill
         ws.cell(row=1, column=1).alignment = center_align
@@ -672,7 +598,6 @@ async def api_export():
             cell.alignment = center_align
             cell.border = thin_border
 
-        # Data rows
         for ri, (period, label) in enumerate(period_labels):
             row = ri + 2
             ws.cell(row=row, column=1, value=label).alignment = center_align
@@ -683,13 +608,7 @@ async def api_export():
                 slot_key = (day, period)
                 entries_at_slot = day_period_map.get(slot_key, [])
                 if entries_at_slot:
-                    lines = []
-                    for e in entries_at_slot:
-                        line = e.subject.name
-                        if e.batch != "ALL":
-                            line += f" (B{e.batch})"
-                        line += f"\n{e.faculty_code} | {e.classroom.room_id}"
-                        lines.append(line)
+                    lines = [formatter(e) for e in entries_at_slot]
                     cell_value = "\n---\n".join(lines)
                 else:
                     cell_value = ""
@@ -698,9 +617,48 @@ async def api_export():
                 cell.alignment = center_align
                 cell.border = thin_border
 
-        # Auto-width
         for col in ws.columns:
             ws.column_dimensions[col[0].column_letter].width = 22
+
+    # 1. Division Sheets
+    for class_key, day_period_map in grid.items():
+        sheet_name = f"{class_key[0]}-{class_key[1]}-{class_key[2]}"[:31]
+        ws = wb.create_sheet(title=sheet_name)
+        
+        def div_format(e):
+            line = e.subject.name
+            if e.batch != "ALL": line += f" (B{e.batch})"
+            return f"{line}\n{e.faculty_code} | {e.classroom.room_id}"
+            
+        populate_ws(ws, day_period_map, div_format)
+
+    # 2. Faculty Sheets
+    for fac, day_period_map in fac_grid.items():
+        sheet_name = f"F_{fac}"[:31].replace("/", "_").replace("\\", "_").replace("?", "_").replace("*", "_").replace("[", "_").replace("]", "_")
+        ws = wb.create_sheet(title=sheet_name)
+        
+        def fac_format(e):
+            c = e.subject.class_key
+            div_str = f"{c[0]}-{c[1]}-{c[2]}"
+            line = e.subject.name
+            if e.batch != "ALL": line += f" (B{e.batch})"
+            return f"{line}\n{div_str} | {e.classroom.room_id}"
+            
+        populate_ws(ws, day_period_map, fac_format)
+
+    # 3. Room Sheets
+    for rm, day_period_map in room_grid.items():
+        sheet_name = f"R_{rm}"[:31].replace("/", "_").replace("\\", "_").replace("?", "_").replace("*", "_").replace("[", "_").replace("]", "_")
+        ws = wb.create_sheet(title=sheet_name)
+        
+        def rm_format(e):
+            c = e.subject.class_key
+            div_str = f"{c[0]}-{c[1]}-{c[2]}"
+            line = e.subject.name
+            if e.batch != "ALL": line += f" (B{e.batch})"
+            return f"{line}\n{div_str} | {e.faculty_code}"
+            
+        populate_ws(ws, day_period_map, rm_format)
 
     # Save to temp file
     export_path = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx").name
