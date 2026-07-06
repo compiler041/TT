@@ -411,77 +411,343 @@ def schedule_theory(
     division_meta: dict[tuple[str, str, str], DivisionMeta]
 ) -> list[Subject]:
     unscheduled = []
+    days = ["M", "T", "W", "R", "F"]
     
-    # Pre-calculate total theory hours needed per division
     from collections import defaultdict
-    div_theory_hours = defaultdict(int)
-    for s in subjects:
-        div_theory_hours[s.class_key] += s.hours_per_week
-
-    def get_faculty_constraint_score(s: Subject) -> int:
-        count = 0
-        for fcode in s.faculty_codes:
-            # Add explicit unavailability (from NA sheet)
-            for u in faculty_unavailability:
-                if u.faculty_code == fcode:
-                    count += 5 # Weight NA higher
-            
-            # Add current booked hours from timetable (from practicals/MDM/other divisions)
-            for e in timetable.entries:
-                if e.faculty_code == fcode:
-                    count += e.timeslot.duration
-        return count
-
-    # Sort primarily by how tight the division's schedule is, then subject length, then faculty constraints
-    sorted_subjects = sorted(subjects, key=lambda s: (
-        -div_theory_hours[s.class_key],
-        -s.hours_per_week, 
-        -get_faculty_constraint_score(s)
-    ))
-
     import math
-    for subj in sorted_subjects:
+
+    # Pre-calculate total weekly hours per division (for score_placement)
+    div_weekly_hours = defaultdict(int)
+    for s in subjects:
+        div_weekly_hours[s.class_key] += s.hours_per_week
+    counted_periods = set()
+    for e in timetable.entries:
+        for p in e.timeslot.occupied_periods:
+            key = (e.subject.class_key, e.timeslot.day, p)
+            if key not in counted_periods:
+                counted_periods.add(key)
+                div_weekly_hours[e.subject.class_key] += 1
+
+    def get_div_hours_on_day(class_key, day):
+        """Count how many periods a division already has on a day."""
+        periods = set()
+        for e in timetable.get_division_entries_on_day(class_key, day):
+            periods.update(e.timeslot.occupied_periods)
+        return len(periods)
+
+    def get_contiguous_periods(class_key, day):
+        """Get the set of periods that would keep the schedule gap-free on this day.
+        Returns periods adjacent to existing entries, or all periods if day is empty."""
+        day_entries = timetable.get_division_entries_on_day(class_key, day)
+        if not day_entries:
+            return set(VALID_PERIODS)  # Empty day — any period is fine
+        
+        occupied = set()
+        for e in day_entries:
+            occupied.update(e.timeslot.occupied_periods)
+        
+        # Find contiguous slots: periods adjacent to the existing block
+        # Split into morning (<=4) and afternoon (>=5) blocks
+        morning = sorted(p for p in occupied if p <= 4)
+        afternoon = sorted(p for p in occupied if p >= 5)
+        
+        valid = set()
+        if morning:
+            # Can extend before the first or after the last morning entry
+            if morning[0] - 1 >= 1:
+                valid.add(morning[0] - 1)
+            if morning[-1] + 1 <= 4:
+                valid.add(morning[-1] + 1)
+        else:
+            # No morning entries — any morning slot is fine (starts a new block)
+            valid.update({1, 2, 3, 4})
+            
+        if afternoon:
+            if afternoon[0] - 1 >= 5:
+                valid.add(afternoon[0] - 1)
+            if afternoon[-1] + 1 <= 9:
+                valid.add(afternoon[-1] + 1)
+        else:
+            valid.update({5, 6, 7, 8, 9})
+        
+        # Don't offer periods already occupied
+        valid -= occupied
+        return valid
+
+    # Build work list: (subject, faculty_code, hours_remaining)
+    work_items = []
+    for subj in subjects:
         faculty_code = subj.faculty_codes[0] if subj.faculty_codes else ""
         hours_missing = int(subj.hours_per_week) - timetable.count_subject_hours(subj)
-        if hours_missing <= 0: continue
+        if hours_missing > 0:
+            work_items.append({
+                'subject': subj,
+                'faculty': faculty_code,
+                'remaining': hours_missing,
+            })
 
-        blocks_needed = math.ceil(hours_missing / subj.duration)
-        for _ in range(int(blocks_needed)):
-            placed_this = False
-            candidate_slots = []
+    # Sort by most constrained first (tightest divisions first)
+    work_items.sort(key=lambda w: (
+        -div_weekly_hours[w['subject'].class_key],
+        -w['remaining'],
+        random.random()
+    ))
 
-            for slot in all_slots(duration=subj.duration):
-                classroom = resolve_classroom(subj, classrooms, timetable, slot, division_meta)
-                if classroom is None:
+    # Round-robin: place ONE hour of each subject per round
+    max_rounds = max((w['remaining'] for w in work_items), default=0)
+    
+    for round_num in range(int(max_rounds)):
+        # Shuffle within each round for variety across attempts
+        round_items = [w for w in work_items if w['remaining'] > 0]
+        random.shuffle(round_items)
+        # But keep most-constrained divisions first
+        round_items.sort(key=lambda w: (
+            -div_weekly_hours[w['subject'].class_key],
+            random.random()
+        ))
+
+        for item in round_items:
+            if item['remaining'] <= 0:
+                continue
+
+            subj = item['subject']
+            faculty_code = item['faculty']
+
+            # Sort days by fewest hours for this division (balance load)
+            day_order = sorted(days, key=lambda d: (
+                get_div_hours_on_day(subj.class_key, d),
+                random.random()
+            ))
+
+            placed = False
+            for day in day_order:
+                # Get contiguous-only periods for this day
+                valid_periods = get_contiguous_periods(subj.class_key, day)
+                if not valid_periods:
                     continue
 
-                if is_valid_placement_v2(
-                    timetable, subj, faculty_code, classroom, slot, faculty_unavailability
-                ):
-                    score = score_placement(timetable, subj, faculty_code, slot, classroom)
-                    candidate_slots.append((score, slot, classroom))
+                candidate_slots = []
+                for period in sorted(valid_periods):
+                    try:
+                        slot = TimeSlot(day=day, start_period=period, duration=subj.duration)
+                    except ValueError:
+                        continue
 
-            if candidate_slots:
-                random.shuffle(candidate_slots)
-                candidate_slots.sort(key=lambda x: x[0])
-                _, best_slot, best_classroom = candidate_slots[0]
+                    classroom = resolve_classroom(subj, classrooms, timetable, slot, division_meta)
+                    if classroom is None:
+                        continue
+
+                    if is_valid_placement_v2(
+                        timetable, subj, faculty_code, classroom, slot, faculty_unavailability
+                    ):
+                        score = score_placement(timetable, subj, faculty_code, slot, classroom, division_weekly_hours=div_weekly_hours)
+                        candidate_slots.append((score, slot, classroom))
+
+                if candidate_slots:
+                    candidate_slots.sort(key=lambda x: x[0])
+                    _, best_slot, best_classroom = candidate_slots[0]
+                    
+                    timetable.add(ScheduleEntry(
+                        subject=subj,
+                        faculty_code=faculty_code,
+                        classroom=best_classroom,
+                        timeslot=best_slot,
+                        batch=subj.batch,
+                    ))
+                    item['remaining'] -= subj.duration
+                    placed = True
+                    break  # Move to next subject in round-robin
+
+            if not placed:
+                # Try ANY valid slot as fallback (relaxed contiguity)
+                fallback_slots = []
+                for slot in all_slots(duration=subj.duration):
+                    classroom = resolve_classroom(subj, classrooms, timetable, slot, division_meta)
+                    if classroom is None:
+                        continue
+                    if is_valid_placement_v2(
+                        timetable, subj, faculty_code, classroom, slot, faculty_unavailability
+                    ):
+                        score = score_placement(timetable, subj, faculty_code, slot, classroom, division_weekly_hours=div_weekly_hours)
+                        fallback_slots.append((score, slot, classroom))
                 
-                timetable.add(ScheduleEntry(
-                    subject=subj,
-                    faculty_code=faculty_code,
-                    classroom=best_classroom,
-                    timeslot=best_slot,
-                    batch=subj.batch,
-                ))
-                placed_this = True
-            else:
-                print(f"[DEBUG] Core Theory {subj.name} ({subj.branch}) FAILED TO PLACE! hours_per_week={subj.hours_per_week}, room={subj.room}, faculty={subj.faculty_codes}")
+                if fallback_slots:
+                    fallback_slots.sort(key=lambda x: x[0])
+                    _, best_slot, best_classroom = fallback_slots[0]
+                    timetable.add(ScheduleEntry(
+                        subject=subj,
+                        faculty_code=faculty_code,
+                        classroom=best_classroom,
+                        timeslot=best_slot,
+                        batch=subj.batch,
+                    ))
+                    item['remaining'] -= subj.duration
 
-            if not placed_this:
-                unscheduled.append(subj)
-                break
+    # Collect unscheduled subjects
+    for item in work_items:
+        if item['remaining'] > 0:
+            print(f"[DEBUG] Core Theory {item['subject'].name} ({item['subject'].branch}) FAILED TO PLACE! remaining={item['remaining']}")
+            unscheduled.append(item['subject'])
 
     return unscheduled
+
+# ------------------------------------------------------------------
+# Post-processing: Defragmentation (close gaps)
+# ------------------------------------------------------------------
+
+def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyUnavailability]) -> int:
+    """
+    Aggressive post-processing: close gaps in each division's daily schedule.
+    Runs multiple passes since closing one gap may enable closing another.
+    """
+    total_moves = 0
+    days = ["M", "T", "W", "R", "F"]
+
+    div_keys = set()
+    for e in timetable.entries:
+        div_keys.add(e.subject.class_key)
+
+    def can_move_entry(entry, new_period):
+        """Check if an entry can safely move to new_period on the same day."""
+        new_slot = TimeSlot(day=entry.timeslot.day, start_period=new_period, duration=entry.timeslot.duration)
+        
+        # Check all periods the new slot would occupy are valid
+        for p in new_slot.occupied_periods:
+            if p not in VALID_PERIODS:
+                return False
+
+        # Faculty free? (exclude self)
+        for e in timetable.entries:
+            if e is entry:
+                continue
+            if e.faculty_code == entry.faculty_code and e.timeslot.overlaps(new_slot):
+                return False
+
+        # Faculty unavailability
+        for p in new_slot.occupied_periods:
+            for u in faculty_unavailability:
+                if u.faculty_code == entry.faculty_code and u.day == entry.timeslot.day and u.period == p:
+                    return False
+
+        # Room free? (exclude self, skip ONLINE)
+        if entry.classroom.room_id != "ONLINE":
+            for e in timetable.entries:
+                if e is entry:
+                    continue
+                if e.classroom.room_id == entry.classroom.room_id and e.timeslot.overlaps(new_slot):
+                    return False
+
+        # Class/batch free? (exclude self)
+        for e in timetable.entries:
+            if e is entry:
+                continue
+            if not e.timeslot.overlaps(new_slot):
+                continue
+            e_year, e_branch, e_div = e.subject.class_key
+            q_year, q_branch, q_div = entry.subject.class_key
+            if e_year != q_year or e_div != q_div:
+                continue
+            if e_branch == q_branch or e_branch == "ALL" or q_branch == "ALL":
+                if e.batch == "ALL" or entry.batch == "ALL" or e.batch == entry.batch:
+                    return False
+
+        return True
+
+    def move_entry(entry, new_period):
+        """Move an entry to a new period."""
+        new_slot = TimeSlot(day=entry.timeslot.day, start_period=new_period, duration=entry.timeslot.duration)
+        idx = timetable.entries.index(entry)
+        timetable.entries[idx] = ScheduleEntry(
+            subject=entry.subject,
+            faculty_code=entry.faculty_code,
+            classroom=entry.classroom,
+            timeslot=new_slot,
+            batch=entry.batch,
+        )
+        return timetable.entries[idx]
+
+    # Run multiple passes (gaps closed in one pass may open compaction in next)
+    for pass_num in range(5):
+        pass_moves = 0
+
+        for div_key in div_keys:
+            for day in days:
+                day_entries = timetable.get_division_entries_on_day(div_key, day)
+                if len(day_entries) <= 1:
+                    continue
+
+                # Separate theory and practical entries
+                theory_entries = [e for e in day_entries if e.timeslot.duration == 1]
+                practical_entries = [e for e in day_entries if e.timeslot.duration >= 2]
+
+                if not theory_entries:
+                    continue
+
+                # Periods locked by practicals (don't move these)
+                practical_periods = set()
+                for e in practical_entries:
+                    practical_periods.update(e.timeslot.occupied_periods)
+
+                # Get all occupied periods
+                all_periods = set()
+                for e in day_entries:
+                    all_periods.update(e.timeslot.occupied_periods)
+
+                # Split into morning (<=4) and afternoon (>=5)
+                morning_periods = sorted(p for p in all_periods if p <= 4)
+                afternoon_periods = sorted(p for p in all_periods if p >= 5)
+
+                def has_gaps(periods):
+                    if len(periods) <= 1:
+                        return False
+                    for i in range(1, len(periods)):
+                        if periods[i] - periods[i-1] > 1:
+                            return True
+                    return False
+
+                # Compact morning block: push everything toward period 1
+                if has_gaps(morning_periods):
+                    morning_theory = sorted(
+                        [e for e in theory_entries if e.timeslot.start_period <= 4],
+                        key=lambda e: e.timeslot.start_period
+                    )
+                    target = 1
+                    for entry in morning_theory:
+                        while target in practical_periods and target <= 4:
+                            target += 1
+                        if target > 4:
+                            break
+                        if entry.timeslot.start_period != target:
+                            if can_move_entry(entry, target):
+                                move_entry(entry, target)
+                                pass_moves += 1
+                        target += 1
+
+                # Compact afternoon block: push everything toward period 5
+                if has_gaps(afternoon_periods):
+                    afternoon_theory = sorted(
+                        [e for e in theory_entries if e.timeslot.start_period >= 5],
+                        key=lambda e: e.timeslot.start_period
+                    )
+                    target = 5
+                    for entry in afternoon_theory:
+                        while target in practical_periods and target <= 9:
+                            target += 1
+                        if target > 9:
+                            break
+                        if entry.timeslot.start_period != target:
+                            if can_move_entry(entry, target):
+                                move_entry(entry, target)
+                                pass_moves += 1
+                        target += 1
+
+        total_moves += pass_moves
+        if pass_moves == 0:
+            break  # No more improvements possible
+
+    print(f"[DEFRAG] Moved {total_moves} entries to close gaps across {pass_num + 1} passes")
+    return total_moves
+
 
 # ------------------------------------------------------------------
 # Orchestrator
@@ -500,7 +766,7 @@ def run_full_schedule(
     best_unscheduled = subjects.copy()
     best_bottlenecks = []
 
-    for attempt in range(15):
+    for attempt in range(30):
         timetable = Timetable()
         bottlenecks = []
         
@@ -539,6 +805,9 @@ def run_full_schedule(
                 print(f"[DEBUG] END-OF-ATTEMPT {attempt}: {subj.name} ({subj.subject_type}) scheduled={scheduled} < needed={needed}. Appending to unscheduled!")
                 unscheduled.append(subj)
 
+        # ---- Post-processing: defragment to close gaps ----
+        defrag_timetable(timetable, faculty_unavailability)
+
         if not unscheduled:
             best_timetable = timetable
             best_unscheduled = []
@@ -552,3 +821,4 @@ def run_full_schedule(
 
     print(f"[DEBUG] BEST ATTEMPT had {len(best_unscheduled)} unscheduled subjects: {[s.name + '(' + s.subject_type + ')' for s in best_unscheduled]}")
     return best_timetable, best_unscheduled, best_bottlenecks
+

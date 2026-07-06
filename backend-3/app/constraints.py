@@ -158,8 +158,12 @@ def no_theory_during_practical(timetable: Timetable, class_key: tuple[str, str, 
             return False
     return True
 
-def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot, classroom: Classroom = None) -> int:
-    """Returns a penalty score (lower = better) for soft constraints."""
+def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, slot: TimeSlot, classroom: Classroom = None, division_weekly_hours: dict = None) -> int:
+    """Returns a penalty score (lower = better) for soft constraints.
+    
+    division_weekly_hours: optional dict mapping class_key -> total weekly hours
+                           for the division. Used to enforce minimum daily hours.
+    """
     penalty = 0
     days = ["M", "T", "W", "R", "F"]
     day_entries_div = timetable.get_division_entries_on_day(subject.class_key, slot.day)
@@ -169,11 +173,14 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
     for e in day_entries_div:
         used_periods.update(e.timeslot.occupied_periods)
 
-    # 1. Theory Spread (+10 Penalty)
-    if not subject.is_practical and subject.subject_type == "L":
+    # 1. Same Subject on Same Day — extreme penalty (+10000)
+    #    Two lectures of the same subject (e.g. AEC) must NOT appear
+    #    on the same day. Penalty is so high that the solver will
+    #    virtually always avoid this.
+    if not subject.is_practical:
         for e in day_entries_div:
-            if e.subject.name == subject.name and e.subject.subject_type == "L":
-                penalty += 10
+            if e.subject.name == subject.name and not e.subject.is_practical:
+                penalty += 5000
 
     # 2. Tutorial Spread (+15 Penalty)
     if subject.subject_type == "T":
@@ -189,7 +196,8 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
     if student_total_today > 6:
         penalty += 8
 
-    # 4. Continuous Schedules (+3 Penalty per Gap)
+    # 4. Continuous Schedules — NO GAPS (+1000000 Penalty per Gap period)
+    #    Nuclear penalty — gaps are virtually impossible.
     proposed_student_periods = used_periods | set(slot.occupied_periods)
     if proposed_student_periods:
         sorted_sp = sorted(proposed_student_periods)
@@ -198,7 +206,76 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
             if sorted_sp[i - 1] == 4 and sorted_sp[i] == 5:
                 continue  # ignore lunch break
             if gap > 0:
-                penalty += 3 * gap
+                penalty += 1000000 * gap
+
+    # 5. Teacher Weekly Load Balancing (+200 Penalty)
+    #    Penalise placing a lecture on a day where this faculty already
+    #    has more hours than their average daily load, so the solver
+    #    spreads the teacher's workload evenly across the week.
+    if faculty_code:
+        faculty_hours_by_day = {d: 0 for d in days}
+        for e in timetable.entries:
+            if e.faculty_code == faculty_code:
+                faculty_hours_by_day[e.timeslot.day] += e.timeslot.duration
+        total_existing = sum(faculty_hours_by_day.values())
+        avg_daily = (total_existing + slot.duration) / 5.0
+        proposed_today = faculty_hours_by_day[slot.day] + slot.duration
+        if proposed_today > avg_daily + 1:
+            penalty += 200 * int(proposed_today - avg_daily)
+
+    # 6. Minimum Daily Hours — Even Distribution (+1000 Penalty)
+    #    If a division has N total weekly hours, each day should get at
+    #    least ceil(N/5) hours. This penalty fires when placing on a day
+    #    that's already at/above the daily target while other days are
+    #    still below the target. Forces the solver to fill under-loaded
+    #    days first (e.g. 45 hrs/week -> at least 9 hrs/day).
+    if division_weekly_hours and subject.class_key in division_weekly_hours:
+        total_weekly = division_weekly_hours[subject.class_key]
+        min_daily_target = math.ceil(total_weekly / len(days))
+
+        # Count hours already scheduled per day for this division
+        div_hours_by_day = {d: 0 for d in days}
+        for e in timetable.entries:
+            e_year, e_branch, e_div = e.subject.class_key
+            q_year, q_branch, q_div = subject.class_key
+            if e_year == q_year and e_div == q_div:
+                if e_branch == q_branch or e_branch == "ALL" or q_branch == "ALL":
+                    # Only count ALL-batch entries or unique per-batch periods
+                    if e.batch == "ALL":
+                        div_hours_by_day[e.timeslot.day] += e.timeslot.duration
+                    else:
+                        # For batch-specific entries, count them once per timeslot
+                        # (multiple batches run in parallel, student only sits one)
+                        pass
+
+        # Re-count batch-specific: for each day, find unique periods occupied
+        # by at least one batch entry (parallel batches share time)
+        batch_periods_by_day = {d: set() for d in days}
+        for e in timetable.entries:
+            e_year, e_branch, e_div = e.subject.class_key
+            q_year, q_branch, q_div = subject.class_key
+            if e_year == q_year and e_div == q_div:
+                if e_branch == q_branch or e_branch == "ALL" or q_branch == "ALL":
+                    if e.batch != "ALL":
+                        batch_periods_by_day[e.timeslot.day].update(e.timeslot.occupied_periods)
+
+        for d in days:
+            div_hours_by_day[d] += len(batch_periods_by_day[d])
+
+        current_day_hours = div_hours_by_day[slot.day] + slot.duration
+        days_below_target = sum(1 for d in days if div_hours_by_day[d] < min_daily_target and d != slot.day)
+
+        # If this day is already at/above target but other days are still below,
+        # heavily penalize to push placement to under-loaded days
+        if div_hours_by_day[slot.day] >= min_daily_target and days_below_target > 0:
+            excess = current_day_hours - min_daily_target
+            penalty += 15000 * max(1, excess)
+
+        # Lighter penalty: even if under target, prefer the day with fewest hours
+        # to ensure even filling across all days
+        min_hours_day = min(div_hours_by_day.values())
+        if div_hours_by_day[slot.day] > min_hours_day + 1:
+            penalty += 200 * (div_hours_by_day[slot.day] - min_hours_day)
 
     return penalty
 
@@ -226,14 +303,21 @@ def is_valid_placement_v2(
     if subject.is_practical and not no_theory_during_practical(timetable, subject.class_key, slot):
         return False
 
-    # =====================================================================
-    # HC — Never start a practical at period 4 (11-12) or 9 (5-6)
-    # =====================================================================
     if subject.is_practical and slot.duration >= 2:
         if slot.start_period == 4:
             return False
         if slot.start_period >= 9:
             return False
+
+    # =====================================================================
+    # HC — Same theory subject cannot appear twice on the same day
+    # =====================================================================
+    if not subject.is_practical:
+        day_entries = timetable.get_division_entries_on_day(subject.class_key, slot.day)
+        for e in day_entries:
+            if e.subject.name == subject.name and not e.subject.is_practical:
+                return False
+
     return (
         faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)
         and class_is_free(timetable, subject.class_key, slot, subject.batch)
