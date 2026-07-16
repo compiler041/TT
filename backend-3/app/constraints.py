@@ -197,16 +197,33 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
         penalty += 8
 
     # 4. Continuous Schedules — NO GAPS (+1000000000 Penalty per Gap period)
-    #    Nuclear penalty — gaps are virtually impossible.
-    proposed_student_periods = used_periods | set(slot.occupied_periods)
-    if proposed_student_periods:
-        sorted_sp = sorted(proposed_student_periods)
-        for i in range(1, len(sorted_sp)):
-            gap = sorted_sp[i] - sorted_sp[i - 1] - 1
-            if sorted_sp[i - 1] == 4 and sorted_sp[i] == 5:
-                continue  # ignore lunch break
-            if gap > 0:
-                penalty += 1000000000 * gap
+    #    Nuclear penalty — gaps are virtually impossible. Evaluated PER BATCH.
+    batches_to_check = {"ALL"}
+    if subject.batch != "ALL":
+        batches_to_check.add(subject.batch)
+    for e in day_entries_div:
+        if e.batch != "ALL":
+            batches_to_check.add(e.batch)
+            
+    total_gaps = 0
+    for b in batches_to_check:
+        b_periods = set()
+        for e in day_entries_div:
+            if e.batch == "ALL" or e.batch == b:
+                b_periods.update(e.timeslot.occupied_periods)
+        if subject.batch == "ALL" or subject.batch == b:
+            b_periods.update(slot.occupied_periods)
+            
+        if b_periods:
+            sorted_sp = sorted(b_periods)
+            for i in range(1, len(sorted_sp)):
+                gap = sorted_sp[i] - sorted_sp[i - 1] - 1
+                if sorted_sp[i - 1] == 4 and sorted_sp[i] == 5:
+                    continue  # ignore lunch break
+                if gap > 0:
+                    total_gaps += gap
+                    
+    penalty += 1000000000 * total_gaps
 
     # 5. Teacher Weekly Load Balancing (+200 Penalty)
     #    Penalise placing a lecture on a day where this faculty already
@@ -317,22 +334,6 @@ def is_valid_placement_v2(
         for e in day_entries:
             if e.subject.name == subject.name and not e.subject.is_practical:
                 return False
-
-    # =====================================================================
-    # HC — STRICT NO GAP CONSTRAINT
-    # =====================================================================
-    day_entries = timetable.get_division_entries_on_day(subject.class_key, slot.day)
-    used_periods = set()
-    for e in day_entries:
-        used_periods.update(e.timeslot.occupied_periods)
-        
-    proposed_periods = used_periods | set(slot.occupied_periods)
-    if proposed_periods:
-        min_p = min(proposed_periods)
-        max_p = max(proposed_periods)
-        # If the span of periods is greater than the number of unique periods, there is a gap.
-        if (max_p - min_p + 1) > len(proposed_periods):
-            return False
 
     return (
         faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)
