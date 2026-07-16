@@ -318,6 +318,22 @@ def is_valid_placement_v2(
             if e.subject.name == subject.name and not e.subject.is_practical:
                 return False
 
+    # =====================================================================
+    # HC — STRICT NO GAP CONSTRAINT
+    # =====================================================================
+    day_entries = timetable.get_division_entries_on_day(subject.class_key, slot.day)
+    used_periods = set()
+    for e in day_entries:
+        used_periods.update(e.timeslot.occupied_periods)
+        
+    proposed_periods = used_periods | set(slot.occupied_periods)
+    if proposed_periods:
+        min_p = min(proposed_periods)
+        max_p = max(proposed_periods)
+        # If the span of periods is greater than the number of unique periods, there is a gap.
+        if (max_p - min_p + 1) > len(proposed_periods):
+            return False
+
     return (
         faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)
         and class_is_free(timetable, subject.class_key, slot, subject.batch)

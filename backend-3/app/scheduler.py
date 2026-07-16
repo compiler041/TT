@@ -447,30 +447,17 @@ def schedule_theory(
             occupied.update(e.timeslot.occupied_periods)
         
         # Find contiguous slots: periods adjacent to the existing block
-        # Split into morning (<=4) and afternoon (>=5) blocks
-        morning = sorted(p for p in occupied if p <= 4)
-        afternoon = sorted(p for p in occupied if p >= 5)
+        # Do not split into morning/afternoon, the whole day must be ONE contiguous block
+        min_p = min(occupied)
+        max_p = max(occupied)
         
         valid = set()
-        if morning:
-            # Can extend before the first or after the last morning entry
-            if morning[0] - 1 >= 1:
-                valid.add(morning[0] - 1)
-            if morning[-1] + 1 <= 4:
-                valid.add(morning[-1] + 1)
-        else:
-            # No morning entries — any morning slot is fine (starts a new block)
-            valid.update({1, 2, 3, 4})
+        if min_p - 1 >= 1:
+            valid.add(min_p - 1)
+        if max_p + 1 <= 9:
+            valid.add(max_p + 1)
             
-        if afternoon:
-            if afternoon[0] - 1 >= 5:
-                valid.add(afternoon[0] - 1)
-            if afternoon[-1] + 1 <= 9:
-                valid.add(afternoon[-1] + 1)
-        else:
-            valid.update({5, 6, 7, 8, 9})
-        
-        # Don't offer periods already occupied
+        # Don't offer periods already occupied (should be redundant, but safe)
         valid -= occupied
         return valid
 
@@ -705,41 +692,10 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
                             return True
                     return False
 
-                # Compact morning block: push everything toward period 1
-                if has_gaps(morning_periods):
-                    morning_theory = sorted(
-                        [e for e in theory_entries if e.timeslot.start_period <= 4],
-                        key=lambda e: e.timeslot.start_period
-                    )
-                    target = 1
-                    for entry in morning_theory:
-                        while target in practical_periods and target <= 4:
-                            target += 1
-                        if target > 4:
-                            break
-                        if entry.timeslot.start_period != target:
-                            if can_move_entry(entry, target):
-                                move_entry(entry, target)
-                                pass_moves += 1
-                        target += 1
-
-                # Compact afternoon block: push everything toward period 5
-                if has_gaps(afternoon_periods):
-                    afternoon_theory = sorted(
-                        [e for e in theory_entries if e.timeslot.start_period >= 5],
-                        key=lambda e: e.timeslot.start_period
-                    )
-                    target = 5
-                    for entry in afternoon_theory:
-                        while target in practical_periods and target <= 9:
-                            target += 1
-                        if target > 9:
-                            break
-                        if entry.timeslot.start_period != target:
-                            if can_move_entry(entry, target):
-                                move_entry(entry, target)
-                                pass_moves += 1
-                        target += 1
+                # Compaction to Period 1 or Period 5 has been removed.
+                # The user explicitly requested that starting at 10 AM is perfectly fine,
+                # as long as the entire block is contiguous.
+                # The hard constraint in constraints.py already guarantees strict contiguity.
 
         total_moves += pass_moves
         if pass_moves == 0:
