@@ -196,7 +196,7 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
     if student_total_today > 6:
         penalty += 8
 
-    # 4. Continuous Schedules — NO GAPS (+1000000 Penalty per Gap period)
+    # 4. Continuous Schedules — NO GAPS (+1000000000 Penalty per Gap period)
     #    Nuclear penalty — gaps are virtually impossible.
     proposed_student_periods = used_periods | set(slot.occupied_periods)
     if proposed_student_periods:
@@ -206,7 +206,7 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
             if sorted_sp[i - 1] == 4 and sorted_sp[i] == 5:
                 continue  # ignore lunch break
             if gap > 0:
-                penalty += 1000000 * gap
+                penalty += 1000000000 * gap
 
     # 5. Teacher Weekly Load Balancing (+200 Penalty)
     #    Penalise placing a lecture on a day where this faculty already
