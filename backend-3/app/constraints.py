@@ -336,10 +336,12 @@ def is_valid_placement_v2(
                 return False
 
     # =====================================================================
-    # HC — STRICT NO GAP (per batch)
+    # HC — STRICT NO GAP (per batch, morning/afternoon blocks)
     # A placement is REJECTED if it would create a gap in any batch's
-    # daily schedule.  "gap" = the span (max-min+1) exceeds the count
-    # of unique occupied periods.
+    # morning block (P1-P4) or afternoon block (P5-P9).
+    # The lunch break between P4 and P5 is a natural divider —
+    # having morning classes and afternoon classes is fine even if
+    # there's no class right before/after lunch.
     # =====================================================================
     day_entries = timetable.get_division_entries_on_day(subject.class_key, slot.day)
 
@@ -353,6 +355,14 @@ def is_valid_placement_v2(
     numbered_batches = {b for b in batches_on_day if b != "ALL"}
     check_batches = numbered_batches if numbered_batches else {"ALL"}
 
+    def _has_gap_in_block(periods):
+        """True if there's a gap within a set of periods."""
+        if len(periods) < 2:
+            return False
+        min_p = min(periods)
+        max_p = max(periods)
+        return (max_p - min_p + 1) > len(periods)
+
     for b in check_batches:
         b_periods = set()
         for e in day_entries:
@@ -361,11 +371,12 @@ def is_valid_placement_v2(
         if subject.batch == "ALL" or subject.batch == b:
             b_periods.update(slot.occupied_periods)
 
-        if len(b_periods) >= 2:
-            min_p = min(b_periods)
-            max_p = max(b_periods)
-            if (max_p - min_p + 1) > len(b_periods):
-                return False   # gap detected → reject
+        # Split into morning and afternoon blocks
+        morning = {p for p in b_periods if p <= 4}
+        afternoon = {p for p in b_periods if p >= 5}
+
+        if _has_gap_in_block(morning) or _has_gap_in_block(afternoon):
+            return False   # gap detected → reject
 
     return (
         faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)

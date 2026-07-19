@@ -437,8 +437,8 @@ def schedule_theory(
 
     def get_contiguous_periods(class_key, day, batch="ALL"):
         """Get the set of periods that would keep the schedule gap-free on this day
-        for the given batch.  A batch sees ALL entries plus its own batch entries.
-        Returns periods adjacent to the existing block, or all periods if day is empty."""
+        for the given batch.  Uses morning (P1-P4) / afternoon (P5-P9) blocks
+        matching the hard constraint in constraints.py."""
         day_entries = timetable.get_division_entries_on_day(class_key, day)
         if not day_entries:
             return set(VALID_PERIODS)  # Empty day — any period is fine
@@ -453,9 +453,26 @@ def schedule_theory(
 
         check_batches = numbered_batches if numbered_batches else {"ALL"}
 
-        # For every batch that this placement could affect,
-        # find valid adjacent periods that won't create a gap.
-        valid = set(VALID_PERIODS)   # start with all, then intersect
+        def _adjacent_periods_for_block(block_periods, block_range):
+            """Return periods adjacent to an existing contiguous block,
+            clamped to the given range (morning or afternoon)."""
+            if not block_periods:
+                return set(block_range)  # empty block → any period in range ok
+            min_p = min(block_periods)
+            max_p = max(block_periods)
+            result = set()
+            if min_p - 1 >= min(block_range):
+                result.add(min_p - 1)
+            if max_p + 1 <= max(block_range):
+                result.add(max_p + 1)
+            result -= block_periods
+            return result
+
+        MORNING = range(1, 5)   # P1-P4
+        AFTERNOON = range(5, 10)  # P5-P9
+
+        # Start with all periods, then intersect with what each batch allows
+        valid = set(VALID_PERIODS)
         for b in check_batches:
             b_periods = set()
             for e in day_entries:
@@ -463,26 +480,18 @@ def schedule_theory(
                     b_periods.update(e.timeslot.occupied_periods)
 
             if not b_periods:
-                # This batch has nothing scheduled today — any period is ok
-                continue
+                continue  # nothing scheduled for this batch → any period ok
 
-            # Only allow periods adjacent to the existing contiguous block
-            min_p = min(b_periods)
-            max_p = max(b_periods)
+            b_morning = {p for p in b_periods if p <= 4}
+            b_afternoon = {p for p in b_periods if p >= 5}
+
             b_valid = set()
-            if min_p - 1 >= 1:
-                b_valid.add(min_p - 1)
-            if max_p + 1 <= 9:
-                b_valid.add(max_p + 1)
-            # Also allow periods inside the block that aren't occupied
-            # (in case another batch left a hole this batch can fill)
-            for p in range(min_p, max_p + 1):
-                if p not in b_periods:
-                    b_valid.add(p)
-            b_valid -= b_periods   # don't re-occupy
+            b_valid |= _adjacent_periods_for_block(b_morning, MORNING)
+            b_valid |= _adjacent_periods_for_block(b_afternoon, AFTERNOON)
+            b_valid -= b_periods
             valid &= b_valid
 
-        # Also remove already-occupied periods for ALL batches
+        # Remove already-occupied periods (for ALL batches combined)
         all_occupied = set()
         for e in day_entries:
             all_occupied.update(e.timeslot.occupied_periods)
@@ -721,10 +730,44 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
                             return True
                     return False
 
-                # Compaction to Period 1 or Period 5 has been removed.
-                # The user explicitly requested that starting at 10 AM is perfectly fine,
-                # as long as the entire block is contiguous.
-                # The hard constraint in constraints.py already guarantees strict contiguity.
+                # ---- Compact morning block: close gaps ----
+                if has_gaps(morning_periods):
+                    morning_theory = sorted(
+                        [e for e in theory_entries if e.timeslot.start_period <= 4],
+                        key=lambda e: e.timeslot.start_period
+                    )
+                    # Find the anchor point (min occupied period in morning)
+                    anchor = min(morning_periods)
+                    target = anchor
+                    for entry in morning_theory:
+                        while target in practical_periods and target <= 4:
+                            target += 1
+                        if target > 4:
+                            break
+                        if entry.timeslot.start_period != target:
+                            if can_move_entry(entry, target):
+                                move_entry(entry, target)
+                                pass_moves += 1
+                        target += 1
+
+                # ---- Compact afternoon block: close gaps ----
+                if has_gaps(afternoon_periods):
+                    afternoon_theory = sorted(
+                        [e for e in theory_entries if e.timeslot.start_period >= 5],
+                        key=lambda e: e.timeslot.start_period
+                    )
+                    anchor = min(afternoon_periods)
+                    target = anchor
+                    for entry in afternoon_theory:
+                        while target in practical_periods and target <= 9:
+                            target += 1
+                        if target > 9:
+                            break
+                        if entry.timeslot.start_period != target:
+                            if can_move_entry(entry, target):
+                                move_entry(entry, target)
+                                pass_moves += 1
+                        target += 1
 
         total_moves += pass_moves
         if pass_moves == 0:
@@ -751,7 +794,7 @@ def run_full_schedule(
     best_unscheduled = subjects.copy()
     best_bottlenecks = []
 
-    for attempt in range(30):
+    for attempt in range(50):
         timetable = Timetable()
         bottlenecks = []
         
