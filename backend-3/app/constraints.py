@@ -335,6 +335,38 @@ def is_valid_placement_v2(
             if e.subject.name == subject.name and not e.subject.is_practical:
                 return False
 
+    # =====================================================================
+    # HC — STRICT NO GAP (per batch)
+    # A placement is REJECTED if it would create a gap in any batch's
+    # daily schedule.  "gap" = the span (max-min+1) exceeds the count
+    # of unique occupied periods.
+    # =====================================================================
+    day_entries = timetable.get_division_entries_on_day(subject.class_key, slot.day)
+
+    # Collect every batch that exists on this day (including the proposed one)
+    batches_on_day = set()
+    for e in day_entries:
+        batches_on_day.add(e.batch)
+    batches_on_day.add(subject.batch)
+
+    # Normalise: if "ALL" is present, we must also check every numbered batch
+    numbered_batches = {b for b in batches_on_day if b != "ALL"}
+    check_batches = numbered_batches if numbered_batches else {"ALL"}
+
+    for b in check_batches:
+        b_periods = set()
+        for e in day_entries:
+            if e.batch == "ALL" or e.batch == b:
+                b_periods.update(e.timeslot.occupied_periods)
+        if subject.batch == "ALL" or subject.batch == b:
+            b_periods.update(slot.occupied_periods)
+
+        if len(b_periods) >= 2:
+            min_p = min(b_periods)
+            max_p = max(b_periods)
+            if (max_p - min_p + 1) > len(b_periods):
+                return False   # gap detected → reject
+
     return (
         faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)
         and class_is_free(timetable, subject.class_key, slot, subject.batch)

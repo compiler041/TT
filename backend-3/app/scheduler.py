@@ -435,30 +435,58 @@ def schedule_theory(
             periods.update(e.timeslot.occupied_periods)
         return len(periods)
 
-    def get_contiguous_periods(class_key, day):
-        """Get the set of periods that would keep the schedule gap-free on this day.
-        Returns periods adjacent to existing entries, or all periods if day is empty."""
+    def get_contiguous_periods(class_key, day, batch="ALL"):
+        """Get the set of periods that would keep the schedule gap-free on this day
+        for the given batch.  A batch sees ALL entries plus its own batch entries.
+        Returns periods adjacent to the existing block, or all periods if day is empty."""
         day_entries = timetable.get_division_entries_on_day(class_key, day)
         if not day_entries:
             return set(VALID_PERIODS)  # Empty day — any period is fine
-        
-        occupied = set()
+
+        # Determine which batches we need to keep gap-free
+        numbered_batches = set()
         for e in day_entries:
-            occupied.update(e.timeslot.occupied_periods)
-        
-        # Find contiguous slots: periods adjacent to the existing block
-        # Do not split into morning/afternoon, the whole day must be ONE contiguous block
-        min_p = min(occupied)
-        max_p = max(occupied)
-        
-        valid = set()
-        if min_p - 1 >= 1:
-            valid.add(min_p - 1)
-        if max_p + 1 <= 9:
-            valid.add(max_p + 1)
-            
-        # Don't offer periods already occupied (should be redundant, but safe)
-        valid -= occupied
+            if e.batch != "ALL":
+                numbered_batches.add(e.batch)
+        if batch != "ALL":
+            numbered_batches.add(batch)
+
+        check_batches = numbered_batches if numbered_batches else {"ALL"}
+
+        # For every batch that this placement could affect,
+        # find valid adjacent periods that won't create a gap.
+        valid = set(VALID_PERIODS)   # start with all, then intersect
+        for b in check_batches:
+            b_periods = set()
+            for e in day_entries:
+                if e.batch == "ALL" or e.batch == b:
+                    b_periods.update(e.timeslot.occupied_periods)
+
+            if not b_periods:
+                # This batch has nothing scheduled today — any period is ok
+                continue
+
+            # Only allow periods adjacent to the existing contiguous block
+            min_p = min(b_periods)
+            max_p = max(b_periods)
+            b_valid = set()
+            if min_p - 1 >= 1:
+                b_valid.add(min_p - 1)
+            if max_p + 1 <= 9:
+                b_valid.add(max_p + 1)
+            # Also allow periods inside the block that aren't occupied
+            # (in case another batch left a hole this batch can fill)
+            for p in range(min_p, max_p + 1):
+                if p not in b_periods:
+                    b_valid.add(p)
+            b_valid -= b_periods   # don't re-occupy
+            valid &= b_valid
+
+        # Also remove already-occupied periods for ALL batches
+        all_occupied = set()
+        for e in day_entries:
+            all_occupied.update(e.timeslot.occupied_periods)
+        valid -= all_occupied
         return valid
 
     # Build work list: (subject, faculty_code, hours_remaining)
@@ -508,8 +536,8 @@ def schedule_theory(
 
             placed = False
             for day in day_order:
-                # Get contiguous-only periods for this day
-                valid_periods = get_contiguous_periods(subj.class_key, day)
+                # Get contiguous-only periods for this day (batch-aware)
+                valid_periods = get_contiguous_periods(subj.class_key, day, subj.batch)
                 if not valid_periods:
                     continue
 
@@ -546,7 +574,8 @@ def schedule_theory(
                     break  # Move to next subject in round-robin
 
             if not placed:
-                # Try ANY valid slot as fallback (relaxed contiguity)
+                # Fallback: try ALL valid slots, but is_valid_placement_v2
+                # will still enforce the hard no-gap constraint.
                 fallback_slots = []
                 for slot in all_slots(duration=subj.duration):
                     classroom = resolve_classroom(subj, classrooms, timetable, slot, division_meta)
