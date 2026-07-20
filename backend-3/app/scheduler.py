@@ -679,17 +679,30 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
         return True
 
     def move_entry(entry, new_period):
-        """Move an entry to a new period."""
+        """Move an entry to a new period. Returns the new entry."""
         new_slot = TimeSlot(day=entry.timeslot.day, start_period=new_period, duration=entry.timeslot.duration)
-        idx = timetable.entries.index(entry)
-        timetable.entries[idx] = ScheduleEntry(
+        new_entry = ScheduleEntry(
             subject=entry.subject,
             faculty_code=entry.faculty_code,
             classroom=entry.classroom,
             timeslot=new_slot,
             batch=entry.batch,
         )
-        return timetable.entries[idx]
+        # Find by identity (id), not by value — safe even after prior moves
+        for i, e in enumerate(timetable.entries):
+            if e is entry:
+                timetable.entries[i] = new_entry
+                return new_entry
+        # Fallback: try by value match
+        for i, e in enumerate(timetable.entries):
+            if (e.subject is entry.subject and e.faculty_code == entry.faculty_code 
+                and e.timeslot.day == entry.timeslot.day 
+                and e.timeslot.start_period == entry.timeslot.start_period
+                and e.batch == entry.batch):
+                timetable.entries[i] = new_entry
+                return new_entry
+        print(f"[DEFRAG-WARN] Could not find entry to move: {entry.subject.name} on {entry.timeslot.day} P{entry.timeslot.start_period}")
+        return entry  # Return unchanged if not found
 
     def has_gaps(periods):
         if len(periods) <= 1:
