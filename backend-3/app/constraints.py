@@ -198,15 +198,18 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
 
     # 4. Continuous Schedules — NO GAPS (+1000000000 Penalty per Gap period)
     #    Nuclear penalty — gaps are virtually impossible. Evaluated PER BATCH.
-    batches_to_check = {"ALL"}
-    if subject.batch != "ALL":
-        batches_to_check.add(subject.batch)
+    #    NO exceptions — not even for lunch. User demands zero gaps.
+    numbered_batches_on_day = set()
     for e in day_entries_div:
         if e.batch != "ALL":
-            batches_to_check.add(e.batch)
+            numbered_batches_on_day.add(e.batch)
+    if subject.batch != "ALL":
+        numbered_batches_on_day.add(subject.batch)
+    # If we have numbered batches, check each one. Otherwise check "ALL".
+    check_batches = numbered_batches_on_day if numbered_batches_on_day else {"ALL"}
             
     total_gaps = 0
-    for b in batches_to_check:
+    for b in check_batches:
         b_periods = set()
         for e in day_entries_div:
             if e.batch == "ALL" or e.batch == b:
@@ -214,14 +217,11 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
         if subject.batch == "ALL" or subject.batch == b:
             b_periods.update(slot.occupied_periods)
             
-        if b_periods:
-            sorted_sp = sorted(b_periods)
-            for i in range(1, len(sorted_sp)):
-                gap = sorted_sp[i] - sorted_sp[i - 1] - 1
-                if sorted_sp[i - 1] == 4 and sorted_sp[i] == 5:
-                    continue  # ignore lunch break
-                if gap > 0:
-                    total_gaps += gap
+        if len(b_periods) >= 2:
+            min_p = min(b_periods)
+            max_p = max(b_periods)
+            gaps = (max_p - min_p + 1) - len(b_periods)
+            total_gaps += gaps
                     
     penalty += 1000000000 * total_gaps
 
@@ -336,35 +336,14 @@ def is_valid_placement_v2(
                 return False
 
     # =====================================================================
-    # HC — STRICT NO GAP (per batch, whole day)
-    # A placement is REJECTED if it would create a gap in any batch's
-    # daily schedule from their first class to their last class.
+    # NOTE: Gap constraint is enforced via post-processing (defrag) and
+    # scoring (gap count), NOT as a hard placement constraint.
+    # Reason: When batch 1 has practical at P1-P2 and batch 2 at P5-P6,
+    # placing theory (ALL) at P3 is rejected because batch 2 sees a gap,
+    # and P4 is rejected because batch 1 sees a gap. This chicken-and-egg
+    # problem makes it IMPOSSIBLE to bridge the gap with single placements.
+    # Instead, we allow placements freely, then defrag compacts everything.
     # =====================================================================
-    day_entries = timetable.get_division_entries_on_day(subject.class_key, slot.day)
-
-    # Collect every batch that exists on this day (including the proposed one)
-    batches_on_day = set()
-    for e in day_entries:
-        batches_on_day.add(e.batch)
-    batches_on_day.add(subject.batch)
-
-    # Normalise: if "ALL" is present, we must also check every numbered batch
-    numbered_batches = {b for b in batches_on_day if b != "ALL"}
-    check_batches = numbered_batches if numbered_batches else {"ALL"}
-
-    for b in check_batches:
-        b_periods = set()
-        for e in day_entries:
-            if e.batch == "ALL" or e.batch == b:
-                b_periods.update(e.timeslot.occupied_periods)
-        if subject.batch == "ALL" or subject.batch == b:
-            b_periods.update(slot.occupied_periods)
-
-        if len(b_periods) >= 2:
-            min_p = min(b_periods)
-            max_p = max(b_periods)
-            if (max_p - min_p + 1) > len(b_periods):
-                return False   # gap detected → reject
 
     return (
         faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)

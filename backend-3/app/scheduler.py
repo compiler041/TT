@@ -102,7 +102,10 @@ def place_fixed_slots(
 ) -> list[Subject]:
     placed_subjects = set()
 
-    for fs in fixed_slots:
+    # Sort fixed slots by period so we place them in order (helps contiguity)
+    sorted_fixed = sorted(fixed_slots, key=lambda fs: fs.period)
+
+    for fs in sorted_fixed:
         slot = TimeSlot(day=fs.day, start_period=fs.period, duration=1)
 
         matches = [
@@ -110,7 +113,7 @@ def place_fixed_slots(
             if s.year == fs.year
             and s.course_type == fs.course_type
             and s.semester == fs.semester
-            and (s.subject_type == "L" or s.subject_type == "P") # MDM can be L or P
+            and (s.subject_type == "L" or s.subject_type == "P")
         ]
 
         if not matches:
@@ -123,6 +126,8 @@ def place_fixed_slots(
             if classroom is None:
                 continue
 
+            # Fixed slots are mandatory — place them even if they create gaps.
+            # The defrag pass will try to close any gaps afterwards.
             entry = ScheduleEntry(
                 subject=subj,
                 faculty_code=faculty_code,
@@ -613,8 +618,9 @@ def schedule_theory(
 
 def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyUnavailability]) -> int:
     """
-    Aggressive post-processing: close gaps in each division's daily schedule.
-    Runs multiple passes since closing one gap may enable closing another.
+    Aggressive post-processing: close gaps in each division+batch's daily schedule.
+    Works per-batch: for each batch on each day, compute the batch's view 
+    (ALL entries + batch-specific entries) and compact them into one block.
     """
     total_moves = 0
     days = ["M", "T", "W", "R", "F"]
@@ -625,7 +631,10 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
 
     def can_move_entry(entry, new_period):
         """Check if an entry can safely move to new_period on the same day."""
-        new_slot = TimeSlot(day=entry.timeslot.day, start_period=new_period, duration=entry.timeslot.duration)
+        try:
+            new_slot = TimeSlot(day=entry.timeslot.day, start_period=new_period, duration=entry.timeslot.duration)
+        except ValueError:
+            return False
         
         # Check all periods the new slot would occupy are valid
         for p in new_slot.occupied_periods:
@@ -682,8 +691,17 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
         )
         return timetable.entries[idx]
 
-    # Run multiple passes (gaps closed in one pass may open compaction in next)
-    for pass_num in range(5):
+    def has_gaps(periods):
+        if len(periods) <= 1:
+            return False
+        ps = sorted(periods)
+        for i in range(1, len(ps)):
+            if ps[i] - ps[i-1] > 1:
+                return True
+        return False
+
+    # Run multiple passes (gaps closed in one pass may enable closing another)
+    for pass_num in range(10):
         pass_moves = 0
 
         for div_key in div_keys:
@@ -692,37 +710,38 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
                 if len(day_entries) <= 1:
                     continue
 
-                # Separate theory and practical entries
-                theory_entries = [e for e in day_entries if e.timeslot.duration == 1]
-                practical_entries = [e for e in day_entries if e.timeslot.duration >= 2]
-
-                if not theory_entries:
-                    continue
-
-                # Periods locked by practicals (don't move these)
-                practical_periods = set()
-                for e in practical_entries:
-                    practical_periods.update(e.timeslot.occupied_periods)
-
-                # Get all occupied periods
-                all_periods = set()
+                # Determine batches present
+                batches = set()
                 for e in day_entries:
-                    all_periods.update(e.timeslot.occupied_periods)
+                    batches.add(e.batch)
+                numbered = {b for b in batches if b != "ALL"}
+                check_batches = numbered if numbered else {"ALL"}
 
-                def has_gaps(periods):
-                    if len(periods) <= 1:
-                        return False
-                    for i in range(1, len(periods)):
-                        if periods[i] - periods[i-1] > 1:
-                            return True
-                    return False
+                for batch in check_batches:
+                    # Get this batch's view (ALL + batch-specific)
+                    batch_entries = [e for e in day_entries if e.batch == "ALL" or e.batch == batch]
+                    batch_periods = set()
+                    for e in batch_entries:
+                        batch_periods.update(e.timeslot.occupied_periods)
 
-                # ---- Compact block: close gaps ----
-                if has_gaps(sorted(all_periods)):
-                    theory_sorted = sorted(theory_entries, key=lambda e: e.timeslot.start_period)
-                    # Find the anchor point (min occupied period)
-                    anchor = min(all_periods)
+                    if not has_gaps(batch_periods):
+                        continue
+
+                    # Separate movable theory from locked practicals
+                    theory_entries = [e for e in batch_entries if e.timeslot.duration == 1]
+                    practical_periods = set()
+                    for e in batch_entries:
+                        if e.timeslot.duration >= 2:
+                            practical_periods.update(e.timeslot.occupied_periods)
+
+                    if not theory_entries:
+                        continue
+
+                    # Compact towards the anchor (min occupied period)
+                    anchor = min(batch_periods)
                     target = anchor
+                    theory_sorted = sorted(theory_entries, key=lambda e: e.timeslot.start_period)
+                    
                     for entry in theory_sorted:
                         while target in practical_periods and target <= 9:
                             target += 1
@@ -730,7 +749,7 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
                             break
                         if entry.timeslot.start_period != target:
                             if can_move_entry(entry, target):
-                                move_entry(entry, target)
+                                entry = move_entry(entry, target)
                                 pass_moves += 1
                         target += 1
 
@@ -740,6 +759,47 @@ def defrag_timetable(timetable: Timetable, faculty_unavailability: list[FacultyU
 
     print(f"[DEFRAG] Moved {total_moves} entries to close gaps across {pass_num + 1} passes")
     return total_moves
+
+
+def count_gaps_in_timetable(timetable: Timetable) -> int:
+    """
+    Final validation: count total number of gaps across ALL division+batch+day combos.
+    A gap is any empty period between the first and last occupied period for a batch's view.
+    """
+    days = ["M", "T", "W", "R", "F"]
+    total_gaps = 0
+
+    div_keys = set()
+    for e in timetable.entries:
+        div_keys.add(e.subject.class_key)
+
+    for div_key in div_keys:
+        for day in days:
+            day_entries = timetable.get_division_entries_on_day(div_key, day)
+            if len(day_entries) <= 1:
+                continue
+
+            batches = set()
+            for e in day_entries:
+                batches.add(e.batch)
+            numbered = {b for b in batches if b != "ALL"}
+            check_batches = numbered if numbered else {"ALL"}
+
+            for batch in check_batches:
+                b_periods = set()
+                for e in day_entries:
+                    if e.batch == "ALL" or e.batch == batch:
+                        b_periods.update(e.timeslot.occupied_periods)
+
+                if len(b_periods) >= 2:
+                    min_p = min(b_periods)
+                    max_p = max(b_periods)
+                    gaps = (max_p - min_p + 1) - len(b_periods)
+                    if gaps > 0:
+                        print(f"[GAP-CHECK] {div_key} day={day} batch={batch} periods={sorted(b_periods)} → {gaps} gap(s)")
+                        total_gaps += gaps
+
+    return total_gaps
 
 
 # ------------------------------------------------------------------
@@ -758,6 +818,7 @@ def run_full_schedule(
     best_timetable = None
     best_unscheduled = subjects.copy()
     best_bottlenecks = []
+    best_score = (float('inf'), float('inf'))  # (gaps, unscheduled) — lower is better
 
     for attempt in range(100):
         timetable = Timetable()
@@ -801,17 +862,29 @@ def run_full_schedule(
         # ---- Post-processing: defragment to close gaps ----
         defrag_timetable(timetable, faculty_unavailability)
 
-        if not unscheduled:
+        # Count remaining gaps after defrag
+        gap_count = count_gaps_in_timetable(timetable)
+        score = (gap_count, len(unscheduled))  # gaps first, then unscheduled
+
+        print(f"[DEBUG] Attempt {attempt}: gaps={gap_count}, unscheduled={len(unscheduled)}")
+
+        if gap_count == 0 and not unscheduled:
+            # Perfect solution — zero gaps and all subjects placed
             best_timetable = timetable
             best_unscheduled = []
             best_bottlenecks = []
+            best_score = (0, 0)
+            print(f"[DEBUG] PERFECT solution found on attempt {attempt}!")
             break
-        else:
-            if len(unscheduled) < len(best_unscheduled):
-                best_timetable = timetable
-                best_unscheduled = unscheduled
-                best_bottlenecks = bottlenecks
 
-    print(f"[DEBUG] BEST ATTEMPT had {len(best_unscheduled)} unscheduled subjects: {[s.name + '(' + s.subject_type + ')' for s in best_unscheduled]}")
+        # Track best solution: prefer fewer gaps first, then fewer unscheduled
+        if best_timetable is None or score < best_score:
+            best_timetable = timetable
+            best_unscheduled = unscheduled
+            best_bottlenecks = bottlenecks
+            best_score = score
+
+    final_gaps = count_gaps_in_timetable(best_timetable) if best_timetable else -1
+    print(f"[DEBUG] BEST ATTEMPT had {len(best_unscheduled)} unscheduled subjects, {final_gaps} gaps: {[s.name + '(' + s.subject_type + ')' for s in best_unscheduled]}")
     return best_timetable, best_unscheduled, best_bottlenecks
 
