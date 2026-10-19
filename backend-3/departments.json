@@ -1,0 +1,6 @@
+[
+  {"dept_id": "EXCP", "password": "excp@123", "display_name": "Electronics & Computer", "is_admin": false},
+  {"dept_id": "CSBS", "password": "csbs@123", "display_name": "Computer Science & BS", "is_admin": false},
+  {"dept_id": "VLSI", "password": "vlsi@123", "display_name": "VLSI Design", "is_admin": false},
+  {"dept_id": "admin", "password": "admin@2025", "display_name": "Administrator", "is_admin": true}
+]

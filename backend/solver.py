@@ -39,6 +39,10 @@ def solve_timetable(data: SchedulerInput, max_time_seconds: int = 120) -> tuple[
             if period_in_day + s.duration > PERIODS_PER_DAY:
                 continue
 
+            # Hard constraint: Practical cannot start at 12 pm (index 3) or 5 pm (index 8)
+            if s.subject_type == SubjectType.PRACTICAL and period_in_day in (3, 8):
+                continue
+
             # Check all periods of session are free in division blocked mask
             all_free = True
             for offset in range(s.duration):

@@ -182,6 +182,15 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
             if e.subject.name == subject.name and not e.subject.is_practical:
                 penalty += 5000
 
+    # F. Same Theory Subject Penalty
+    # Strongly penalize having the same theory subject twice in one day
+    # unless mathematically necessary.
+    if not subject.is_practical:
+        for e in day_entries_div:
+            if e.subject.name == subject.name and not e.subject.is_practical:
+                if e.batch == "ALL" or e.batch == subject.batch or subject.batch == "ALL":
+                    penalty += 50000
+
     # 2. Tutorial Spread (+15 Penalty)
     if subject.subject_type == "T":
         day_idx = days.index(slot.day)
@@ -241,32 +250,32 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
             penalty += 200 * int(proposed_today - avg_daily)
 
     # 6. Minimum Daily Hours — Even Distribution (+1000 Penalty)
-    #    If a division has N total weekly hours, each day should get at
-    #    least ceil(N/5) hours. This penalty fires when placing on a day
-    #    that's already at/above the daily target while other days are
-    #    still below the target. Forces the solver to fill under-loaded
-    #    days first (e.g. 45 hrs/week -> at least 9 hrs/day).
     if division_weekly_hours and subject.class_key in division_weekly_hours:
         total_weekly = division_weekly_hours[subject.class_key]
         min_daily_target = math.ceil(total_weekly / len(days))
 
         # Count hours already scheduled per day for this division
         div_hours_by_day = {d: 0 for d in days}
+        practicals_by_day = {d: 0 for d in days}
+        first_period_by_day = {d: 99 for d in days}
+        
         for e in timetable.entries:
             e_year, e_branch, e_div = e.subject.class_key
             q_year, q_branch, q_div = subject.class_key
             if e_year == q_year and e_div == q_div:
                 if e_branch == q_branch or e_branch == "ALL" or q_branch == "ALL":
-                    # Only count ALL-batch entries or unique per-batch periods
+                    # Update first period of the day
+                    min_p = min(e.timeslot.occupied_periods)
+                    if min_p < first_period_by_day[e.timeslot.day]:
+                        first_period_by_day[e.timeslot.day] = min_p
+                        
+                    if e.batch == "ALL" or e.batch == subject.batch or subject.batch == "ALL":
+                        if e.subject.is_practical:
+                            practicals_by_day[e.timeslot.day] += 1
+
                     if e.batch == "ALL":
                         div_hours_by_day[e.timeslot.day] += e.timeslot.duration
-                    else:
-                        # For batch-specific entries, count them once per timeslot
-                        # (multiple batches run in parallel, student only sits one)
-                        pass
 
-        # Re-count batch-specific: for each day, find unique periods occupied
-        # by at least one batch entry (parallel batches share time)
         batch_periods_by_day = {d: set() for d in days}
         for e in timetable.entries:
             e_year, e_branch, e_div = e.subject.class_key
@@ -279,17 +288,32 @@ def score_placement(timetable: Timetable, subject: Subject, faculty_code: str, s
         for d in days:
             div_hours_by_day[d] += len(batch_periods_by_day[d])
 
+        # A. Practical Distribution Penalty
+        if subject.is_practical and practicals_by_day[slot.day] >= 1:
+            penalty += 100000  # Strongly avoid 2 practicals on same day
+
+        # B. Early Start Penalty (Try to start by period 1, 2, or 3)
+        current_first = first_period_by_day[slot.day]
+        proposed_first = slot.start_period
+        new_first = min(current_first, proposed_first)
+        if new_first > 3:  # Starts later than period 3 (11 AM)
+            penalty += 5000 * (new_first - 3)
+
+        # C. Load Variance Penalty (Max - Min <= 2)
+        simulated_hours = dict(div_hours_by_day)
+        simulated_hours[slot.day] += slot.duration
+        max_hrs = max(simulated_hours.values())
+        min_hrs = min(simulated_hours.values())
+        if (max_hrs - min_hrs) > 2:
+            penalty += 20000 * ((max_hrs - min_hrs) - 2)
+
+        # D. Legacy min daily target pushing
         current_day_hours = div_hours_by_day[slot.day] + slot.duration
         days_below_target = sum(1 for d in days if div_hours_by_day[d] < min_daily_target and d != slot.day)
-
-        # If this day is already at/above target but other days are still below,
-        # heavily penalize to push placement to under-loaded days
         if div_hours_by_day[slot.day] >= min_daily_target and days_below_target > 0:
             excess = current_day_hours - min_daily_target
             penalty += 15000 * max(1, excess)
 
-        # Lighter penalty: even if under target, prefer the day with fewest hours
-        # to ensure even filling across all days
         min_hours_day = min(div_hours_by_day.values())
         if div_hours_by_day[slot.day] > min_hours_day + 1:
             penalty += 200 * (div_hours_by_day[slot.day] - min_hours_day)
@@ -305,6 +329,10 @@ def is_valid_placement_v2(
     slot: TimeSlot,
     faculty_unavailability: list[FacultyUnavailability],
 ) -> bool:
+    debug_fail = False
+    if not subject.is_practical and subject.name == "DM" and subject.class_key == ("SY", "EXCP", "A"):
+        debug_fail = True
+
     is_online = classroom.room_type.upper() == "ONLINE"
     room_ok = True if is_online else (
         room_is_free(timetable, classroom.room_id, slot)
@@ -312,41 +340,44 @@ def is_valid_placement_v2(
     )
 
     if not subject_hours_not_exceeded(timetable, subject, slot.duration):
+        if debug_fail: print(f"[DEBUG-FAIL] {subject.name} {subject.batch} at {slot.day} P{slot.start_period}: subject_hours_not_exceeded")
         return False
         
     if not division_max_periods_per_day(timetable, subject.class_key, slot.day, slot.duration):
+        if debug_fail: print(f"[DEBUG-FAIL] {subject.name} {subject.batch} at {slot.day} P{slot.start_period}: division_max_periods_per_day")
         return False
         
     if subject.is_practical and not no_theory_during_practical(timetable, subject.class_key, slot):
+        if debug_fail: print(f"[DEBUG-FAIL] {subject.name} {subject.batch} at {slot.day} P{slot.start_period}: no_theory_during_practical")
         return False
 
     if subject.is_practical and slot.duration >= 2:
-        if slot.start_period == 4:
-            return False
         if slot.start_period >= 9:
+            if debug_fail: print(f"[DEBUG-FAIL] {subject.name} {subject.batch} at {slot.day} P{slot.start_period}: start_period >= 9")
             return False
-
+            
     # =====================================================================
-    # HC — Same theory subject cannot appear twice on the same day
-    # =====================================================================
-    if not subject.is_practical:
-        day_entries = timetable.get_division_entries_on_day(subject.class_key, slot.day)
-        for e in day_entries:
-            if e.subject.name == subject.name and not e.subject.is_practical:
-                return False
-
-    # =====================================================================
-    # NOTE: Gap constraint is enforced via post-processing (defrag) and
-    # scoring (gap count), NOT as a hard placement constraint.
-    # Reason: When batch 1 has practical at P1-P2 and batch 2 at P5-P6,
-    # placing theory (ALL) at P3 is rejected because batch 2 sees a gap,
-    # and P4 is rejected because batch 1 sees a gap. This chicken-and-egg
-    # problem makes it IMPOSSIBLE to bridge the gap with single placements.
-    # Instead, we allow placements freely, then defrag compacts everything.
+    # MAX 1 PRACTICAL PER DAY is enforced via heavy scoring penalty
+    # because some divisions (e.g. LY EXCP) have > 5 practicals per week,
+    # making a hard constraint mathematically impossible to solve.
     # =====================================================================
 
-    return (
-        faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)
-        and class_is_free(timetable, subject.class_key, slot, subject.batch)
-        and room_ok
-    )
+    # =====================================================================
+    # NOTE: Same theory subject twice a day is penalized in score_placement,
+    # NOT a hard constraint, to avoid impossible schedules.
+    # =====================================================================
+
+    fac_free = faculty_is_free(timetable, faculty_code, slot, faculty_unavailability)
+    cls_free = class_is_free(timetable, subject.class_key, slot, subject.batch)
+    
+    if not fac_free:
+        if debug_fail: print(f"[DEBUG-FAIL] {subject.name} {subject.batch} at {slot.day} P{slot.start_period}: faculty_is_free ({faculty_code})")
+        return False
+    if not cls_free:
+        if debug_fail: print(f"[DEBUG-FAIL] {subject.name} {subject.batch} at {slot.day} P{slot.start_period}: class_is_free")
+        return False
+    if not room_ok:
+        if debug_fail: print(f"[DEBUG-FAIL] {subject.name} {subject.batch} at {slot.day} P{slot.start_period}: room_ok ({classroom.room_id})")
+        return False
+
+    return True

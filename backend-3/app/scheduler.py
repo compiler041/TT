@@ -809,7 +809,7 @@ def count_gaps_in_timetable(timetable: Timetable) -> int:
                     max_p = max(b_periods)
                     gaps = (max_p - min_p + 1) - len(b_periods)
                     if gaps > 0:
-                        print(f"[GAP-CHECK] {div_key} day={day} batch={batch} periods={sorted(b_periods)} → {gaps} gap(s)")
+                        print(f"[GAP-CHECK] {div_key} day={day} batch={batch} periods={sorted(b_periods)} -> {gaps} gap(s)")
                         total_gaps += gaps
 
     return total_gaps
@@ -858,6 +858,7 @@ def run_full_schedule(
                 session_subject_ids.add(id(subj))
 
         remaining_standalone = [s for s in remaining if id(s) not in session_subject_ids]
+        
         unscheduled_theory = schedule_theory(
             timetable, remaining_standalone, classrooms, faculty_unavailability, division_meta
         )
